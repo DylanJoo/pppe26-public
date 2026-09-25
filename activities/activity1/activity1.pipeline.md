@@ -322,8 +322,7 @@ of the three files) — not just your best guess.
 State whether you used AI tools for this assignment. If you did, name the tools and briefly describe how you used them. Full credit is earned at every level of use, the course was designed for use with AI as a partner in mind.
 
 ==---==
-I used Claude Code (Claude Opus 5.5) to finish the implementation and review execution results.
-I draft my rough answer and discuss with claude to refine my answer if the answer is incorrect or not precise enough.
+I used Claude Code (Claude Opus 5.5) to finish the implementation and review execution results. I draft my answer and discuss with claude to refine my answer if the answer is incorrect or not precise enough.
 
 ## What to submit
 
@@ -336,6 +335,6 @@ I draft my rough answer and discuss with claude to refine my answer if the answe
 
 ## RB Questions/Reflection
 Parting thoughts that are helpful to think about. These are not required for the assignment. 
-- Explain how the first version has a RAW dependency?
-- Which version of the computation does more instructions?
-- What can you conclude about the relationship between the number of instructions and performance?
+- Explain how the first version has a RAW dependency? mentioned in the Part 3(d)
+- Which version of the computation does more instructions? same amount of instructions (the loop) but withTempVars need to setup more variables.
+- What can you conclude about the relationship between the number of instructions and performance? dependency chain matters in addition to the # of instructions.
