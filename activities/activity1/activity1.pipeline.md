@@ -211,6 +211,9 @@ If your checksum between the methods differs, your rewrite isn't
 computing the same thing as `noTempVars`, effectively nullifying
 any meaningful intepretation of the speedup you measure because
 you're timing different programs.
+```
+
+Implemntation in `activity1_pipeline.cpp`. Same answer, checksum 16783984258637683210 at -O0 to -O3.
 
 ## Part 2 — Measure it across optimization levels
 
@@ -228,18 +231,18 @@ minimum, not the first number you see:
 
 | Level | One chain | Four chains | Speedup |
 |---|---|---|---|
-| `-O0` | | | |
-| `-O1` | | | |
-| `-O2` | | | |
-| `-O3` | | | |
+| `-O0` | 581 ms | 518 ms | 1.12x |
+| `-O1` | 73 ms  | 34 ms  | 2.15x |
+| `-O2` | 74 ms  | 34 ms  | 2.18x |
+| `-O3` | 74 ms  | 34 ms  | 2.18x |
 
 ## Part 3 — Compare the generated code across `-O1`, `-O2`, `-O3`
 
 Dump the assembly for your file at each level:
 
 ```bash
-clang++ -std=c++17 -O1 -S -o activity1_O1.s activity1_pipeline.cpp
-clang++ -std=c++17 -O2 -S -o activity1_O2.s activity1_pipeline.cpp
+clang++ -std=c++17 -O1 -S -o activity1_O1.s activity1_pipeline.cpp;
+clang++ -std=c++17 -O2 -S -o activity1_O2.s activity1_pipeline.cpp;
 clang++ -std=c++17 -O3 -S -o activity1_O3.s activity1_pipeline.cpp
 ```
 
@@ -252,16 +255,21 @@ three files and answer:
 - **(a):** Does `noTempVars`'s generated code change across `-O1`, `-O2`,
   `-O3`?
 
-  ==---==
+  ==--==
+  No. O1 and O2 and O3 have same assembly code for the instructions of `noTempVars` (block `_Z10noTempVarsRSt6vectorIiSaIiEE`)
 
 - **(b):** Does `withTempVars`'s?
 
-  ==---==
+  ==--==
+  Also the same assembly code for the intructions of `withTempVars` (block `_Z12withTempVarsRSt6vectorIiSaIiEE`)
 
 - **(c):** Does either use vector/SIMD registers at any level? (`v0`-`v31`
   or `q0`-`q31`; scalar code uses only `x`/`w`.)
 
-  ==---==
+  ==--==
+  No. There is no `xmm` in the function's block.
+  NOTE: For this AMD EPYC processor, the register name of Vector is like 
+  xmm0-xmm15.
 
 - **(d):** Find the four `mul` instructions in each loop body and trace
   their register operands. In `noTempVars` function, does each `mul` read a
@@ -271,6 +279,30 @@ three files and answer:
   you measured in Part 2?
 
   ==---==
+  ```
+  noTempVars
+	1. imulq	%rax, %rsi     # => reads rax (wait), rsi; write rsi
+	2. imulq	%rax, %rdi     # => reads rax, rdi; write rdi
+	3. imulq	%rsi, %rdi     # => reads rsi (wait), rdi; write rdi
+	4. imulq	%rdi, %rax     # => reads rdi (wait), rax; write rax
+  ```
+  Yes. Three of four read a register that another imulq just wrote.
+  ```
+  withTempVars
+	1. imulq	%r9, %rcx
+	2. imulq	%r9, %rax
+	3. imulq	%r9, %rdx
+	4. imulq	%r9, %r8
+  ```
+  No. No imulq reads the register's multiply just wrote. 
+  Each has its own accumulator (rcx, rax, rdx, r8)
+
+  Counts: (4 movslq + 4 orq + 4 imulq + addq + cmpq + jb) = 15 in both.
+
+  Speedup: 9 / 4 = 2.25
+  * (noTempVars) 3 multiplies (d1 * d2 combined) * 3 cycles latency ~ 9
+  * (withTempVars) 4 multiplies
+  * Speed up is decided by dependency chain, not counts.
 
 - **(e):** Multiply is associative, so the compiler is *allowed*
   to split `noTempVars`'s chain for you. Your Part 2 numbers show whether it did.
@@ -278,6 +310,8 @@ three files and answer:
   class of transformation?
 
   ==---==
+  Compiler does combine d1 * d2 but the dependency chain still exists and 
+  should be broken down instead of relying on optimizer.
 
 Back each answer with the specific evidence you found (an instruction
 count, the presence or absence of a vector register, a `diff` between two
@@ -288,6 +322,8 @@ of the three files) — not just your best guess.
 State whether you used AI tools for this assignment. If you did, name the tools and briefly describe how you used them. Full credit is earned at every level of use, the course was designed for use with AI as a partner in mind.
 
 ==---==
+I used Claude Code (Claude Opus 5.5) to finish the implementation and review execution results.
+I draft my rough answer and discuss with claude to refine my answer if the answer is incorrect or not precise enough.
 
 ## What to submit
 
