@@ -75,7 +75,7 @@ the W where the hops stop being L1 hits. It prints what it found.
 > five does not save you. Both are why the program prints the clock it measured
 > at, at the start and at the end.
 
-## Part 1 — Read your machine (10 points)
+## Part 1 — Read your machine
 
 Run the starter as given and record what it prints for your machine:
 
@@ -96,7 +96,7 @@ arithmetic by hand for your machine and show the calculation.
 
 ==---==
 
-## Part 2 — Predict, before you measure (20 points + 30 points for code)
+## Part 2 — Predict, before you measure
 
 Implement `sets_reachable(lda, g)` in your `activity2_conflicts.cpp`. It returns how many
 distinct L1 sets one column of the matrix touches, given the leading dimension
@@ -140,7 +140,7 @@ sets?
 
 ==---==
 
-## Part 3 — Measure, and score yourself (20 points)
+## Part 3 — Measure, and score yourself
 
 Run the program and fill in the measured column:
 
@@ -177,7 +177,7 @@ percentage? Verify by adding it to the `ldas[]` list and re-running.
 
 ==---==
 
-## Part 4 — Does the rule transfer? (15 points)
+## Part 4 — Does the rule transfer?
 
 This machine is not one processor. `cpu0`–`cpu3` are Zen 5 cores; `cpu4`–`cpu11`
 are Zen 5c "dense" cores with a lower clock. The harness reads `PIN_CPU` so you
@@ -225,7 +225,7 @@ with your answer to (h)? Explain.
 
 ==---==
 
-## Part 5 — AI Use Disclosure (5 points)
+## Part 5 — AI Use Disclosure
 
 State whether you used AI tools for this assignment. If you did, name the tools
 and briefly describe how you used them. Full credit is earned at every level of
@@ -249,7 +249,7 @@ both work.
 
 ## RB Questions/Reflection
 
-Not required, but worth thinking about:
+These are not required, but worth thinking about:
 
 - Every element of the matrix gets read exactly once and written exactly once,
   no matter what `lda` is. The instruction count barely changes. Where does a
