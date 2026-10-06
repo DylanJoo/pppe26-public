@@ -5,19 +5,15 @@ time by `__x86_64__`/`__i386__` vs `__aarch64__`/`__arm__`:
 
 ```
 # x86 (Zen 5, AVX2) — scalar, hand-written AVX2, and Highway
-clang++ -O3 -mavx2 -std=c++17 -stdlib=libc++ find_first.cpp -o find_first -lhwy
+# (-mavx2 alone gives Highway SSSE3; see "One trap" at the end)
+clang++ -O3 -mavx2 -mbmi -mbmi2 -mfma -mf16c -maes -mpclmul -std=c++17 \
+        -stdlib=libc++ find_first.cpp -o find_first -lhwy
 
 # arm64 (Apple M5) — scalar, hand-written NEON, and Highway
 clang++ -O3 -std=c++17 -stdlib=libc++ find_first.cpp -o find_first -lhwy
 
 ./find_first
 ```
-
-[find_first_diagram.html](find_first_diagram.html) draws the computation: the
-scalar and vector scans side by side, what happens inside one vector step, and
-why the vectorizer refuses this loop. Open it in a browser.
-
----
 
 # Vectorization: a loop the compiler will not do for you
 
@@ -36,6 +32,12 @@ long find_first(const int64_t* data, long n, int64_t target) {
 }
 ```
 
+
+[find_first_diagram.html](find_first_diagram.html) draws the computation: the
+scalar and vector scans side by side, what happens inside one vector step, and
+why the vectorizer refuses this loop. Open it in a browser.
+
+
 Ask the compiler why it did not vectorize this and it tells you:
 
 ```
@@ -49,6 +51,8 @@ loop exits when it finds something, so the trip count depends on the data
 and there is no plan to make. The compiler emits plain scalar code —
 `cmp` / `je`, one element per iteration, no vector instructions at any
 optimization level.
+
+
 
 ## Why this one counts
 
@@ -85,27 +89,73 @@ not declining to vectorize this loop because it doubts you. It is declining
 because its vectorizer is built around a trip count, and this loop does not
 have one.
 
+## How these were measured
+
+The program pins itself to one core, spins on a high-IPC loop until the
+governor raises the clock, and reports the minimum of seven timing passes
+rather than the mean of one. Set `PIN_CPU` to move off a busy core:
+
+```bash
+PIN_CPU=2 ./find_first
+```
+
+All three matter at this scale. The times below are single-digit to
+low-thousand nanoseconds per call, and this kernel is **compute-bound** — its
+times scale with the core clock, unlike the memory-bound loops in
+[../loop_optimizations/](../loop_optimizations/README.loops.md), which barely
+move when the clock does. So a run on an efficiency core, or on a performance
+core the governor has not yet boosted, reports much larger numbers, and the
+scalar-versus-vector *ratios* shift too: the scalar path is clock-bound while
+the short vector path is dominated by fixed overhead.
+
+On Apple silicon, know what `PIN_CPU=6` actually buys you. The only QoS class
+that confines a thread to the efficiency cluster also parks it at the lowest
+clock and lets anything else preempt it, so an M5 efficiency run measures
+**1.08 GHz and times roughly 4x the performance cluster's** — and it is
+perturbed enough that both vector paths come out *slower* than scalar at most
+lengths (0.62x at 256, 0.72x at 4096). Those are not usable numbers. Use the
+efficiency cluster to see that the clock matters, not to measure how much.
+
+**The numbers currently in this file were taken on a core held at 2.72 GHz**,
+about half this part's 5.13 GHz boost. They are internally consistent — one
+sitting, one clock — but the absolute nanoseconds are roughly double what a
+boosted core gives. Each table below states the clock it was measured at, so a
+replacement should state its own.
+
+<!-- REPLACE: one sitting on a boosted Zen 5 core. Needs only this machine. -->
 ## Results: hand-written AVX2
 
-8192 `int64` values (64 KiB, L1-resident), Ryzen AI 9 HX 370, clang 18,
-`-O3 -mavx2`:
+8192 `int64` values (64 KiB, more than Zen 5's 48 KiB L1d, so partly served
+from L2), Ryzen AI 9 HX 370, g++ 13.3,
+`-O3 -mavx2` plus the flags Highway needs. Pinned to one core, clock warmed and
+**measured at 2.72 GHz**, minimum of seven passes, median of three runs. All
+three columns come from the same sitting, so they are comparable to each other.
 
-| first match at | scalar | simd | speedup |
-|---|---:|---:|---:|
-| 0 | 0.6 ns | 1.3 ns | 0.46x |
-| 16 | 4.2 ns | 2.1 ns | 1.97x |
-| 256 | 55.1 ns | 19.1 ns | 2.88x |
-| 4096 | 702.7 ns | 204.8 ns | 3.43x |
-| 8191 | 1160.3 ns | 524.3 ns | 2.21x |
-| no match | 956.9 ns | 421.4 ns | 2.27x |
+| first match at | scalar | simd | highway | simd | highway |
+|---|---:|---:|---:|---:|---:|
+| 0 | 0.4 ns | 0.7 ns | 1.0 ns | 0.57x | 0.40x |
+| 16 | 4.4 ns | 2.2 ns | 2.5 ns | 2.00x | 1.76x |
+| 256 | 105.6 ns | 29.7 ns | 29.7 ns | **3.56x** | **3.56x** |
+| 4096 | 1518.0 ns | 485.9 ns | 499.7 ns | 3.12x | 3.04x |
+| 8191 | 3026.9 ns | 984.7 ns | 1207.2 ns | 3.07x | 2.51x |
+| no match | 3050.1 ns | 974.0 ns | 1033.2 ns | 3.13x | 2.95x |
+
+The scalar column reproduces to within 0.1% across runs. The only cell that
+moves is Highway at 8191, which ranged 1185–1232 ns over three runs.
+
+> **This was taken at 2.72 GHz, not the part's 5.13 GHz boost clock.** The
+> machine has been sitting at roughly half its boost range since a reboot, and
+> neither `platform_profile=performance` nor `energy_performance_preference=performance`
+> lifts it. Because this kernel is compute-bound, every absolute time here is
+> close to twice what a boosted core gives; the speedup columns are much less
+> affected. Re-take on a boosted core before quoting the nanoseconds.
 
 The crossover is about a dozen elements. If the match is at index 0 the
 scalar version wins outright — it compares once and returns, while the
-vector version still loads and tests a whole register. Past that, 2–3.5x.
+vector version still loads and tests a whole register. Past that, 2–3.6x.
 This holds up across `-O2`, `-O3`, `-march=native`, and gcc — not an
-artifact of one flag combination. But it only exists on x86: there is no
-`<immintrin.h>` on arm64, so this hand-written path has no equivalent on
-the M5 build at all.
+artifact of one flag combination. The arm64 build runs the NEON versions
+instead; every number in this file is from the Zen 5.
 
 ---
 
@@ -136,20 +186,9 @@ needs it to be.
 
 ## What Highway costs on Zen
 
-Nothing measurable. Median of 7 pinned runs, same machine and flags as above:
-
-| first match at | scalar | simd | highway | simd | highway |
-|---|---:|---:|---:|---:|---:|
-| 0 | 0.5 ns | 0.9 ns | 1.0 ns | 0.56x | 0.50x |
-| 16 | 6.8 ns | 1.8 ns | 1.8 ns | 3.78x | 3.78x |
-| 256 | 60.6 ns | 25.3 ns | 26.6 ns | 2.40x | 2.28x |
-| 4096 | 909.1 ns | 329.9 ns | 312.6 ns | 2.76x | 2.91x |
-| 8191 | 1596.1 ns | 773.9 ns | 698.5 ns | 2.06x | 2.29x |
-| none | 1318.8 ns | 666.0 ns | 651.1 ns | 1.98x | 2.03x |
-
-The 256 row is short enough to be noisy — it lands on either side of the
-hand-written version between runs. Everywhere else the two are the same
-speed. The generated inner loops explain why. Hand-written:
+Little, which the `highway` column of the table above shows directly: it
+tracks the hand-written version everywhere except the 8191 row, where it gives
+up about 20%. The generated inner loops explain why. Hand-written:
 
 ```asm
 vpcmpeqq  ymm1, ymm0, ymmword ptr [rdi + 8*rcx]
@@ -175,67 +214,6 @@ cycles. It also writes the fiddly parts for you: remainder handling, and
 turning a comparison mask into a lane index — the two places a hand-written
 version is easiest to get wrong.
 
-## Same source, two chips: Zen vs M5
-
-Both `find_simd` and `find_highway` now build on either chip — AVX2 by hand
-and Highway/AVX2 on the Ryzen, NEON by hand and Highway/NEON on the M5:
-
-```
-$ clang++ -O3 -std=c++17 find_first.cpp -o find_first -lhwy   # on the M5
-highway target: NEON, 2 lanes per vector
-```
-
-Two `int64` lanes instead of four, because NEON registers are 128 bits, half
-the width of AVX2's 256. Median of several pinned runs on each machine, same
-source, same `n = 8192`, `clang -O3`, all times in ns:
-
-| first match at | Zen scalar | Zen simd | Zen highway | M5 scalar | M5 simd | M5 highway |
-|---|---:|---:|---:|---:|---:|---:|
-| 0 | 0.5 | 0.9 | 1.0 | 0.2 | 0.3 | 0.5 |
-| 16 | 6.8 | 1.8 | 1.8 | 4.5 | 3.0 | 2.4 |
-| 256 | 60.6 | 25.3 | 26.6 | 66.0 | 42.7 | 41.7 |
-| 4096 | 909.1 | 329.9 | 312.6 | 931.9 | 639.4 | 536.9 |
-| 8191 | 1596.1 | 773.9 | 698.5 | 1856.9 | 1241.2 | 1043.2 |
-| no match | 1318.8 | 666.0 | 651.1 | 1855.9 | 1244.5 | 1076.1 |
-
-| first match at | Zen simd speedup | Zen highway speedup | M5 simd speedup | M5 highway speedup |
-|---|---:|---:|---:|---:|
-| 0 | 0.56x | 0.50x | 0.67x | 0.40x |
-| 16 | 3.78x | 3.78x | 1.50x | 1.88x |
-| 256 | 2.40x | 2.28x | 1.55x | 1.58x |
-| 4096 | 2.76x | 2.91x | 1.46x | 1.74x |
-| 8191 | 2.06x | 2.29x | 1.50x | 1.78x |
-| no match | 1.98x | 2.03x | 1.49x | 1.72x |
-
-Three things stand out. First, the scalar columns are close — same
-algorithm, same `n`, and neither chip is starved for single-element
-compares, so per-element scalar cost is in the same ballpark on both.
-
-Second, the speedup ceiling is lower on the M5 because it is bounded by lane
-count: doubling the work per instruction buys less than quadrupling it does.
-AVX2's four lanes pull 2.0–3.8x out of this loop past the first few
-elements; NEON's two lanes pull 1.5–1.9x. Same portable source, same
-algorithm — the ceiling is set by the width of the register.
-
-Third, and unexpected: on Zen, hand-written and Highway are the same speed
-(the asm above shows why — they compile to the same instructions), but on
-the M5, Highway beats the hand-written version at every row past index 0,
-by 5–19%. AVX2 has `movemask`, so both versions turn a lane comparison into
-one bitmask and one `ctz`. NEON has nothing equivalent, so `find_simd` above
-falls back to checking each of its two lanes with a branch. Highway's NEON
-`FindFirstTrue` does better: it packs the comparison mask into 4-bit
-"nibbles" and finds the lane with a single trailing-zero count — no
-data-dependent branch per lane (see `FindFirstTrue` in Highway's
-`arm_neon-inl.h`). The straightforward hand-written port loses to the
-library here, for the same reason it usually doesn't on x86: x86 has an
-instruction the naive approach can use directly, and NEON does not.
-
-The index-0 row is the exception on both chips, and for the same structural
-reason: a matched first element makes the scalar loop return on the very
-first compare, while the vector path always pays for one load-and-test of a
-full register before it can check anything. Narrower or wider, that setup
-cost does not go away.
-
 ## One trap
 
 Highway picks its instruction set from the `-m` flags, not from the CPU it
@@ -255,16 +233,18 @@ The program prints the selected target for this reason. If you benchmark
 Highway against hand-written AVX2 without checking this line, Highway looks
 about twice as slow as it is.
 
-The simpler fix is to stop listing individual `-m` flags and name a concrete
-CPU instead — `-march=<cpu>` sets every flag Highway checks for in one shot:
+`-march=native` sets every flag Highway checks for, but on this machine it
+overshoots. Zen 5 has AVX-512, so Highway takes the widest target it can:
 
 ```
-$ clang++ -O3 -march=znver5 ... && ./find_first    # this machine
-highway target: AVX2, 4 lanes per vector
-
-$ clang++ -O3 -march=native ... && ./find_first    # any machine
-highway target: AVX2, 4 lanes per vector
+$ clang++ -O3 -march=native ... && ./find_first
+highway target: AVX3_DL, 8 lanes per vector
 ```
+
+That is a fair build, but it is not the comparison in this file. Highway on
+AVX-512 against hand-written AVX2 puts 8 lanes against 4. To compare like with
+like, use the explicit flag list above. (`-march=znver5` is not an option with
+this toolchain: clang 18 and g++ 13 do not recognize it.)
 
 Two flags that look like they should work do not. `-march=x86-64-v3` — the
 generic "AVX2-generation" portability level — omits AES and PCLMUL, so it
@@ -273,3 +253,111 @@ Haswell silicon has AES-NI, but clang's target definition for it does not
 set `__AES__`. Verified by dumping predefined macros for each target
 (`clang++ -march=<x> -dM -E -x c++ /dev/null`) rather than trusting the
 flag's name — only a concrete, current CPU model reliably sets all six.
+
+---
+
+# Apple silicon: two conclusions that do not carry over
+
+Everything above is Zen 5. The same source on an Apple M5 gives a different
+answer to two separate questions, and the second one is the more useful.
+
+**Method for both.** Apple M5 performance core, macOS 26.6.2, Apple clang 17.0.0,
+Highway 1.3.0, `-O3`, pinned and warmed, **measured at 4.44 GHz**, minimum of
+seven passes, **median of five independent runs**. Every cell below is stable
+across those five to under 1% except where called out.
+
+```bash
+clang++ -O3 -std=c++17 -stdlib=libc++ -I/opt/homebrew/include \
+    -L/opt/homebrew/lib find_first.cpp -o find_first -lhwy
+clang++ -O3 -std=c++17 -stdlib=libc++ -I/opt/homebrew/include \
+    -L/opt/homebrew/lib lanes.cpp -o lanes -lhwy
+```
+
+Those two `-I`/`-L` flags are needed on macOS whenever Highway came from
+Homebrew — clang does not search `/opt/homebrew` on its own, and without them
+the build fails at the `#include <hwy/highway.h>`. The arm64 build line at the
+top of this file needs them too.
+
+## 1. Highway does not match hand-written NEON
+
+On Zen, Highway and the hand-written version compile to the same instructions
+and run at the same speed. On the M5 they do not — Highway wins at every row
+past index 0:
+
+| first match at | scalar | simd | highway | simd | highway | Highway's margin |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 0.2 | 0.9 | 0.9 | 0.27x | 0.27x | — |
+| 16 | 4.3 | 3.2 | 2.7 | 1.31x | 1.59x | **19%** |
+| 256 | 65.6 | 49.2 | 40.4 | 1.33x | 1.62x | **22%** |
+| 4096 | 927.6 | 751.3 | 518.0 | 1.23x | 1.79x | **45%** |
+| 8191 | 1848.4 | 1495.8 | 1109.1 | 1.24x | 1.67x | **35%** |
+| no match | 1847.8 | 1488.1 | 1102.1 | 1.24x | 1.68x | **35%** |
+
+The Highway column is the only noisy one: at 8191 it ranged 1021–1112 ns over
+the five runs, which is why that row's margin reads below the 4096 row's.
+
+The cause is an instruction x86 has and NEON does not. AVX2 has `movemask`, so
+both versions turn a lane comparison into one bitmask and one `ctz` — the same
+four instructions, hence the tie on Zen. NEON has no equivalent, so the
+straightforward hand-written port checks its two lanes with a branch each:
+
+```c
+uint64x2_t eq = vceqq_s64(v, wanted);
+if (vgetq_lane_u64(eq, 0)) return i;        // a branch per lane
+if (vgetq_lane_u64(eq, 1)) return i + 1;
+```
+
+Highway's `FindFirstTrue` for NEON instead packs the mask into 4-bit nibbles
+and locates the lane with a single trailing-zero count, with no data-dependent
+branch per lane (see `arm_neon-inl.h`). So the usual trade is inverted: the
+portable library beats the hand-written intrinsics, and it beats them *because*
+the architecture lacks the instruction the naive approach wants.
+
+## 2. Speedup tracks lane count almost exactly
+
+This is the question [lanes.cpp](lanes.cpp) exists to answer. A vector register
+is a fixed number of bits, so the only way to change the lane count without
+changing the machine is to change the element width — 128-bit NEON holds 2
+`int64` or 16 `int8`. Highway's `ScalableTag<T>` gives the native lane count for
+each, so one source covers every row.
+
+The footprint is held at **64 KiB for every width**, not the element count. Fix
+the count instead and the `int8` row touches 8 KiB while the `int64` row touches
+64 KiB, and you are measuring the cache as much as the lanes.
+
+| type | lanes | elements | scalar ns | highway ns | speedup | speedup at elem 16 |
+|---|---:|---:|---:|---:|---:|---:|
+| `int64` | 2 | 8192 | 1847.6 | 1011.0 | 1.83x | 1.58x |
+| `int32` | 4 | 16384 | 3690.4 | 1006.6 | 3.67x | 2.38x |
+| `int16` | 8 | 32768 | 7369.1 | 990.0 | 7.45x | 3.45x |
+| `int8` | 16 | 65536 | 14738.4 | 932.9 | **15.80x** | 4.13x |
+
+Speedup per doubling of lanes: **2.01, 2.03, 2.12**. Perfect scaling would be
+2.00 each time.
+
+Look at the two time columns rather than the speedup, because that is where the
+result actually comes from. **The Highway column is flat** — 1011, 1007, 990,
+933 ns — while the scalar column doubles every row. Both are consequences of
+the same fact: the vector path's cost is per *byte* and the scalar path's cost
+is per *element*. Sixteen `int8` lanes and two `int64` lanes move one register
+per instruction either way, so scanning 64 KiB costs the vector loop the same
+regardless of width; the scalar loop pays for each element it visits, and a
+narrower type means more of them in the same 64 KiB.
+
+So the speedup is not really a property of the SIMD unit at all — it is the
+ratio of per-element work to per-byte work, and the lane count is what sets it.
+That is why the scaling slightly *exceeds* 2.00 per doubling: Highway gets a
+little faster at narrow widths (933 against 1011 ns), because the tail handling
+and the per-vector bookkeeping are amortised over more elements.
+
+The last column is the counterweight. With the match at element 16 there is
+almost no work to amortise the vector path's fixed setup over, and the same
+lane sweep yields only 1.58x → 4.13x instead of 1.83x → 15.80x. Wider lanes
+still help, but the fixed cost never scales away — which is the index-0 row of
+the first table, generalised.
+
+**The ceiling and the measurement, once more.** The specification says 16
+`int8` lanes and delivers 15.80x, while 2 `int64` lanes deliver 1.83x. That is
+the clearest form of the lecture's claim in this directory: the lane count sets
+the ceiling, and how close you get depends on how much per-element work you
+gave the machine to remove.
