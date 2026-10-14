@@ -122,7 +122,7 @@ worth nothing — the whole point is that the formula tells you the answer in
 advance.
 
 | `lda` | row bytes | sets reached (predicted) | fast or slow? (predicted) |
-|---|---|--- |---| --- |
+|---|---|--- |---|
 | 2048  | 16384  | 1  | slow |   
 | 2049  | 16392  | 64 | fast | 
 | 2050  | 16400  | 64 | fast |    
