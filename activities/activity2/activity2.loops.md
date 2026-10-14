@@ -81,20 +81,21 @@ Run the starter as given and record what it prints for your machine:
 
 | Quantity | Value |
 |---|---|
-| L1d size | ==---== |
-| Associativity (ways) | ==---== |
-| Line size (bytes) | ==---== |
-| Number of sets | ==---== |
-| Core clock after warm-up | ==---== |
+| L1d size | 32768 bytes |
+| Associativity (ways) | 8 |
+| Line size (bytes) | 64 bytes |
+| Number of sets | 64 sets |
+| Core clock after warm-up | 3.07GHz |
 
 **(a)** The harness computes `sets = size / (ways * line)`. Verify that
 arithmetic by hand for your machine and show the calculation.
 
-==---==
+<!-- # cat /sys/devices/system/cpu/cpu0/cache/index0/size -->
+> 32768 / (8 * 64) = 64 sets 
 
 **(b)** How many doubles fit in one cache line on your machine?
 
-==---==
+> Each line is 64 bytes / 8 bytes = 8 doubles
 
 ## Part 2 — Predict, before you measure
 
@@ -121,61 +122,75 @@ worth nothing — the whole point is that the formula tells you the answer in
 advance.
 
 | `lda` | row bytes | sets reached (predicted) | fast or slow? (predicted) |
-|---|---|---|---|
-| 2048 | | ==---== | ==---== |
-| 2049 | | ==---== | ==---== |
-| 2050 | | ==---== | ==---== |
-| 2052 | | ==---== | ==---== |
-| 2056 | | ==---== | ==---== |
-| 2064 | | ==---== | ==---== |
-| 2080 | | ==---== | ==---== |
-| 2112 | | ==---== | ==---== |
-| 2176 | | ==---== | ==---== |
-| 2304 | | ==---== | ==---== |
+|---|---|--- |---| --- |
+| 2048  | 16384  | 1  | slow |   
+| 2049  | 16392  | 64 | fast | 
+| 2050  | 16400  | 64 | fast |    
+| 2052  | 16416  | 64 | fast | 
+| 2056  | 16448  | 64 | fast | 
+| 2064  | 16512  | 32 | fast | 
+| 2080  | 16640  | 16 | fast | 
+| 2112  | 16896  | 8  | slow |  
+| 2176  | 17408  | 4  | slow |  
+| 2304  | 18432  | 2  | slow |  
+
 
 **(c)** State your rule for "fast or slow" as a threshold on sets reached, and
 justify the number you picked using the associativity of your L1. How many
 lines of a single column can be resident at once if the column reaches `k`
 sets?
+> sets reached >= 16 is fast, reaching 4 to 5x. When <= 8, it is slow.
 
-==---==
+> Reaching k sets means k * 8-way (this machine has only 8) = 8k lines.
+> Each set holds only 8, so every later write evicts a line the same column just loaded.
+> I set k=16 because below it the column is confined to 8 or fewer of the 64 sets 
+> ~ around an eighth of the cache (64 / 8) or less.
 
 ## Part 3 — Measure, and score yourself
 
 Run the program and fill in the measured column:
 
-| `lda` | sets reached | measured time | speedup vs `lda`=2048 | prediction correct? |
-|---|---|---|---|---|
-| 2048 | | ==---== | 1.00x | ==---== |
-| 2049 | | ==---== | ==---== | ==---== |
-| 2050 | | ==---== | ==---== | ==---== |
-| 2052 | | ==---== | ==---== | ==---== |
-| 2056 | | ==---== | ==---== | ==---== |
-| 2064 | | ==---== | ==---== | ==---== |
-| 2080 | | ==---== | ==---== | ==---== |
-| 2112 | | ==---== | ==---== | ==---== |
-| 2176 | | ==---== | ==---== | ==---== |
-| 2304 | | ==---== | ==---== | ==---== |
+|   `lda` | sets reached | measured time | speedup vs `lda`=2048 | prediction correct? |
+|-------- |-----------   |----------     |-----------  |  ------ | 
+|    2048 |          1   |    35.4 ms    |       1.00x | correct | 
+|    2049 |         64   |     9.1 ms    |       3.90x | correct | 
+|    2050 |         64   |     7.9 ms    |       4.50x | correct | 
+|    2052 |         64   |     7.7 ms    |       4.60x | correct | 
+|    2056 |         64   |     7.9 ms    |       4.47x | correct | 
+|    2064 |         32   |     6.8 ms    |       5.23x | correct | 
+|    2080 |         16   |     7.6 ms    |       4.67x | correct | 
+|    2112 |          8   |    11.9 ms    |       2.98x | correct | 
+|    2176 |          4   |    14.8 ms    |       2.40x | correct | 
+|    2304 |          2   |    20.1 ms    |       1.76x | correct |   
+
 
 **(d)** Sort your rows by sets reached rather than by `lda`. Is the time
 monotonic in sets reached? Where does the curve flatten out — that is, past what
 number of sets does reaching more sets stop buying you anything?
 
-==---==
+> Mostly yes. Starting from only 1 set reached is 35.4ms, and gradually improves along
+> with set reached increase until >16, it flattens out.
+
 
 **(e)** `2304` is not a power of two, and it is one of the slowest rows in the
 table. `2049` is odd and is one of the fastest. A classmate tells you the rule
 is "avoid powers of two." Using your formula, explain in one or two sentences
 what the actual rule is.
 
-==---==
+> That is not the rule. The formula matters, the main cause is 
+> the adv shared with the number of sets: (`lda` * 8 / line size 64 ) % number of sets 64. 
+> For example, 2304 is not a power of two, but its adv is 32 = (2304/8) % 64
+> And then calculate the sets reached is 2 = 64 / gcd(adv, 64). 
+> 2049 is not a whole number so it reaches all the sets equally.
 
 **(f)** You have a 2048 × 2048 matrix of doubles and you are allowed to waste
 some memory on padding. What is the **smallest** `lda ≥ 2048` that reaches your
 threshold from (c)? How much extra memory does that padding cost, as a
 percentage? Verify by adding it to the `ldas[]` list and re-running.
 
-==---==
+> 2049
+> 1/2048 = 0.049%
+> It's already in the above table, which speeds up 3.9x.
 
 ## Part 4 — Does the rule transfer?
 
@@ -195,18 +210,25 @@ same two questions — a fast cluster and a slow one.
 
 Run both and fill in:
 
-| | Zen 5 (`PIN_CPU=2`) | Zen 5c (`PIN_CPU=6`) |
+| 		     | AMD | Intel |
 |---|---|---|
-| Clock after warm-up | ==---== | ==---== |
-| L1d size / ways / sets | ==---== | ==---== |
-| Time at `lda` = 2048 | ==---== | ==---== |
-| Best time in the table | ==---== | ==---== |
-| Speedup, worst to best | ==---== | ==---== |
+| Model 	          | EPYC 7713 | Xeon Silver 4114 |
+| Clock after warm-up     | 3.08GHz | 2.48 GHz |
+| L1d size / ways / sets  | 32KB/8/64 | 32KB/8/64 |
+| Time at `lda` = 2048    | 35.4 ms | 144.7 ms|
+| Best time in the table  | 6.8ms   | 13.7 ms |
+| Speedup, worst to best  | 5.2x    | 10.5x   |
+
+> I ran the experiments on the lab cluster with two machines with different CPU cores.
+> So I don't have comparison like the different cores Zen 5/5c.
 
 **(g)** Did your Part 2 predictions need to change at all for the second core?
 Explain why or why not in terms of what the formula actually depends on.
 
-==---==
+> No. The formula doesn't change because the lda, L1 size, ways and sets are the same. 
+> Thus, the sets reached are identical. 
+> The results are largely matched. The only difference comes from the different machines.
+
 
 **(h)** Compute two ratios: the slow core's time divided by the fast core's
 time at `lda = 2048`, and the same ratio at your best `lda`. Then compute the
@@ -218,12 +240,23 @@ case? (Hint: a loop whose time scales with the core clock is limited by the
 core. A loop whose time barely moves when the clock changes is limited by
 something else.)
 
-==---==
+> Time at lda = 2048: 144.7  / 35.4 (Intel vs AMD) = 4.1
+> Time at best lda  : 13.7  / 6.8   (Intel vs AMD) = 2.0
+> Clock speeds:     : 3.08 / 2.48   (Intel vs AMD) = 1.24
+
+> We can see that "Time at best lda" is closer to the ratio 1.24, 
+> which depends mostly on the core itself.
+> While "Time at lda" has very high ratio because it involves more factors 
+
+> PS. the other confounders might also affect the results (e.g., memory). 
 
 **(i)** The padding speedup is *larger* on the slower core. Is that consistent
 with your answer to (h)? Explain.
 
-==---==
+> Yes. The padding speedup is 10.5x on the slow machine and 5.2x on the fast one.
+> This is consistent with the finding in (h). 
+> The main reason is that the time at 2048 is waiting for evicted lines, but padding
+> removes it so it gains more with larger ratio.
 
 ## Part 5 — AI Use Disclosure
 
@@ -231,7 +264,9 @@ State whether you used AI tools for this assignment. If you did, name the tools
 and briefly describe how you used them. Full credit is earned at every level of
 use; the course was designed with AI as a partner in mind.
 
-==---==
+> I used Claude Code (Claude Opus 5.5) to explain the concepts step by step,
+> to finish the implementation and review execution results. 
+> I draft the answer with Claude and debug with Claude.
 
 ## What to submit
 
