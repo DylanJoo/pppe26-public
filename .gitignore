@@ -83,6 +83,7 @@ examples/sorting/insertion_sort
 examples/sorting/newintrosort
 examples/sorting/newintrosort_heapsortfallback
 examples/sorting/quicksort
+examples/sorting/quicksort_breakdown
 examples/sorting/sort_compare_large
 examples/sorting/sort_compare_n16
 examples/sorting/std_sort
@@ -152,8 +153,8 @@ examples/openmp/vector_add
 examples/openmp/dot_product
 examples/openmp/reduction
 examples/openmp/fib
-examples/openmp/omp_scheduling_prefix_sum/prefixsum
-examples/openmp/omp_scheduling_prefix_sum/cilk_prefix_sum
+examples/prefix_sum/omp_prefix_sum
+examples/prefix_sum/cilk_prefix_sum
 
 # false_sharing build artifacts (fs_O* covers -O flag builds; this is the plain name)
 examples/false_sharing/false_sharing

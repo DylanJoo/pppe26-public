@@ -26,6 +26,7 @@ Each number session does not necessarily corerspond to a single day of class. We
 | [05.memoryhierarchy.md](course_materials/05.memoryhierarchy.md) | caches, lines, sets and the cost of a miss |
 | [06.loops.md](course_materials/06.loops.md) | the five loop transformations, and naming the bottleneck before picking one |
 | [07.vectorization.md](course_materials/07.vectorization.md) | vector registers, lanes, and the three ways to program a SIMD unit |
+| [09.threads.md](course_materials/09.threads.md) | processes and threads: the OS abstractions behind parallelism, and what they share |
 
 ### Examples
 
@@ -58,8 +59,9 @@ and (where it matters) measured numbers.
 
 | | |
 |---|---|
-| [openmp/](examples/openmp/) | block parallelism, reductions, scheduling policies |
+| [openmp/](examples/openmp/) | parallel regions, parallel loops, reductions, tasks |
 | [cilk/](examples/cilk/) | OpenCilk primitives, work stealing, work/span |
+| [prefix_sum/](examples/prefix_sum/README.prefix_sum.md) | a loop no pragma can parallelize: a parallel scan that does more work, and the memory bandwidth that limits it |
 | [java_threads/](examples/java_threads/) | fork/join, and the startup cost of a thread pool |
 | [joblib/](examples/joblib/) | parallelism from Python, and the hazard of parallelizing bad code |
 | [java_rag_pipeline/](examples/java_rag_pipeline/) | an end-to-end pipeline to profile and speed up |
@@ -90,7 +92,7 @@ Toolchains, only needed for the directories that use them:
   [cilk/](examples/cilk/) Makefile expects it at `~/opencilk`.
 * **Java** — JDK 17+ and Maven for [java_rag_pipeline/](examples/java_rag_pipeline/).
 
-These examples have been tested on at least two machines (Apple M5, MacOSX using clang 17.0, and AMD Ryzen, Pop!_OS 24.04 LTS using clang 16.?). They will not necessarily run on your machine. You can ask Claude or another tool to adapt them to your machine and that should work.  In past versions of the course, I have distributed Docker files that provide a uniform execution environment. I think that is now more difficult and less reliable.
+These examples have been tested on at least two machines (Apple M5, MacOSX using clang 17.0, and AMD Ryzen, Pop!_OS 24.04 LTS using clang 18.1 and g++ 13.3). They will not necessarily run on your machine. You can ask Claude or another tool to adapt them to your machine and that should work.  In past versions of the course, I have distributed Docker files that provide a uniform execution environment. I think that is now more difficult and less reliable.
 
 This means that the results you get from examples and activities will vary with software, hardware, etc. They many even vary widely, i.e. not have the same form. This is interesting and something to raise with the instructor and TAs. 
 
