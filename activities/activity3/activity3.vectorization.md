@@ -134,7 +134,16 @@ clang++ -O3 -std=c++17 -I/opt/homebrew/include \
 **(a)** What does each compiler report for the `to_hex` loop? Copy the line.
 Did it report the loop as vectorized?
 
-==---==
+==
+gcc reports
+> activity3_hex.cpp:124:24: missed: couldn't vectorize loop
+> activity3_hex.cpp:125:36: missed: not vectorized: not suitable for gather load _5 = HEX[_4];
+> didn't vectorize
+
+clang reports
+> activity3_hex.cpp:124:3: remark: vectorized loop (vectorization width: 32, interleaved count: 1) [-Rpass=loop-vectorize]
+> it was vectorized. 32 bytes per iteration
+==
 
 **(b)** Now look at the assembly clang actually generated for `to_hex`. Paste
 just the scalar function into [Compiler Explorer](https://godbolt.org/) with
@@ -149,13 +158,25 @@ clang++ -O3 -std=c++17 -I/opt/homebrew/include -S activity3_hex.cpp       # Appl
 How many shuffle instructions (`vpshufb` on x86, `tbl` on Arm) are in it?
 Which instructions implement the table lookups?
 
-==---==
+==
+> 0 vpshufb instruction in clang's to_hex. 
+> The table lookups are done by movzx and vpinsrb instructions that read the HEX table (_ZL3HEX).
+> 
+> 49:     movzx   edx, byte ptr [rdx + _ZL3HEX]
+> ...
+> 159:    vpinsrb xmm0, xmm0, byte ptr [rdx + _ZL3HEX], 1
+> ...
+> 200:    vpinsrb xmm0, xmm0, byte ptr [rdx + _ZL3HEX], 13
+> ...
+==
 
 **(c)** Whatever the report in (a) said, did the compiler vectorize this loop
 in any way that matters for speed? Explain in two or three sentences what
 happened to the table lookups.
 
-==---==
+==
+No. the lookup table stil processes one byte at a time. It's still going to memory like scalar loop
+==
 
 ## Part 2 — Predict, before you write anything (10 points)
 
@@ -163,18 +184,24 @@ Fill in this table for your machine **before** you write any vector code.
 
 | Quantity | Value |
 |---|---|
-| Vector register width (bits) | ==---== |
-| Bytes per vector register | ==---== |
-| Input bytes per loop iteration | ==---== |
-| Ideal speedup from lane count alone | ==---== |
-| Your predicted speedup at 16 KiB | ==---== |
+| Vector register width (bits) | 256 |
+| Bytes per vector register | 32 |
+| Input bytes per loop iteration | 32 |
+| Ideal speedup from lane count alone | 32x |
+| Your predicted speedup at 16 KiB | ~18x |
 
 **(d)** Justify your predicted speedup. Count the loads and stores the scalar
 loop does per input byte, and estimate how many instructions the vector loop
 needs per register of input. Is your prediction above or below the lane-count
 estimate, and why?
 
-==---==
+==
+Difference of instructions:
+- one-by-one: Load byte (1) --> shift (2) --> load from HEX (2) --> store character (2) + loop (1) = 8
+- vectorize: 1 + 2 + look up with shuffle (2) + interleave> (4) + store char (2) + loop (3) = 14
+
+8 * 32 / 14 = 18.2857
+==
 
 ## Part 3 — Write `to_hex_simd` (25 points for code + 10 points)
 
@@ -201,7 +228,12 @@ Keep going until the harness reports `simd: agrees with scalar`.
 you use, and why is a mask needed after the shift — or, if your machine needs
 none, why not?
 
-==---==
+==
+> Split each byte with _mm256_srli_epi16(bytes, 4): 
+> _mm256_and_si256(..., mask) for high and low nibble (with mask).
+> Because AVX2 has no 8 bit shift so use 16 bit shift. Without mask.
+> The index would be larger than 15.
+==
 
 **(f)** How does your version get the output characters into the right order?
 If you are on x86: what does the output look like if you leave out the final
@@ -209,7 +241,13 @@ permute, and at which output character does the harness first report a
 difference? If you are on Arm: what does `vst2q_u8` do, and what would you have
 had to write without it?
 
-==---==
+==
+After two shuffles, we have two registers, each holding 32 chars. The interleaved version pairs high-nibble and low-nibble characters. They work within each 128 bit half separatetly. 
+
+Leaving out final permute would make each 64 character block has its middle two 16 character pieces swapped, which is the wrong order.
+
+This machine is using AMD x86.
+==
 
 ## Part 4 — Write `to_hex_highway` (15 points for code + 5 points)
 
@@ -221,7 +259,11 @@ the operations you need; Highway's [quick reference](https://google.github.io/hi
 does the speed compare? What did `hn::StoreInterleaved2` do for you, and which
 step of Part 3 does it replace?
 
-==---==
+==
+> to_hex_simd: 11 lines; to_hex_highway: 4 lines
+> The speed is the same because highway isnt doing anything in the run time. They run at the same speed: 0.0440 ns/byte.
+> It replaces step 4 interleave along with two stores of steps 5.
+==
 
 ## Part 5 — Measure (20 points)
 
@@ -229,18 +271,24 @@ Run the finished program and fill in the table:
 
 | input | scalar ns/byte | simd ns/byte | highway ns/byte | simd speedup | highway speedup |
 |---|---|---|---|---|---|
-| 1 KiB | ==---== | ==---== | ==---== | ==---== | ==---== |
-| 16 KiB | ==---== | ==---== | ==---== | ==---== | ==---== |
-| 256 KiB | ==---== | ==---== | ==---== | ==---== | ==---== |
-| 4 MiB | ==---== | ==---== | ==---== | ==---== | ==---== |
-| 64 MiB | ==---== | ==---== | ==---== | ==---== | ==---== |
+| 1 KiB   | 0.7966 | 0.0353 | 0.0358 | 22.6x | 22.3x |
+| 16 KiB  | 0.8057 | 0.0441 | 0.0440 | 18.3x | 18.3x | 
+| 256 KiB | 0.8060 | 0.0549 | 0.0545 | 14.7x | 14.8x |
+| 4 MiB   | 0.8100 | 0.0576 | 0.0571 | 14.1x | 14.2x |
+| 64 MiB  | 0.8098 | 0.1164 | 0.1162 | 7.0x  | 7.0x  |
 
 **(h)** How close did your prediction from Part 2 come at 16 KiB? If you were
 off, what did you miss? Is the measured speedup below or above your lane-count estimate? Explain
 using instruction overhead and, where relevant, memory bandwidth. Lane count
 alone is a model, not a strict bound on speedup over this scalar implementation.
 
-==---==
+==
+Predictio is very close (18x)
+Similar speedup but way slower than my original intuition (32x). The speed up is smaller than 32 because there are some instruction overhead for vectorization.
+For example, mask, permutation, interleave, which might be different from the scalar version.
+
+The speedup also depends on size because of memory bandwidth.
+==
 
 ## Part 6 — AI Use Disclosure (5 points)
 
@@ -248,7 +296,10 @@ State whether you used AI tools for this assignment. If you did, name the tools
 and briefly describe how you used them. Full credit is earned at every level of
 use; the course was designed with AI as a partner in mind.
 
-==---==
+==
+Yes. I used Claude Code (Anthropic, model Claude Opus 5.5) as a tutor and implementation assistant throughout this assignment.
+I draft my answer (~part 4) or ask hints from claude. Then, discuss with claude to refine my answer if the answer is incorrect or not precise enough.
+==
 
 ## What to submit
 
