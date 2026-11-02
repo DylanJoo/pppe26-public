@@ -67,6 +67,10 @@ and (where it matters) measured numbers.
 | [java_rag_pipeline/](examples/java_rag_pipeline/) | an end-to-end pipeline to profile and speed up |
 
 
+## Activities
+
+- [Activity 4 — Load Balancing Adaptive Simpson Integration](activities/activity4/)
+
 ## Getting started
 
 Python environment for the notebooks:
