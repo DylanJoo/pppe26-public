@@ -228,7 +228,14 @@ runs of six versions on each of three inputs.
 which input do the versions differ the most? Give the best and the worst
 version on that input, with their speedups.
 
-==---==
+==
+For trig, all six versions reach nearly the same speedup (between 3.53x and 3.60x). 
+Each panel of trig costs about the same, so scheduling methods make no difference.
+
+The versions differ most on exp: the best is `omp_task` at 3.55x; the worst is `omp_static` at 1.16x. 
+`omp_static` gives thread 3 panels 768 - 1023, which hold almost all the work; the other three threads finish early and wait. 
+`omp_task` instead creates tasks as it recurses, and idle threads take pending tasks; the expensive region is then shared among all.
+==
 
 ## Part 3 — Static vs. dynamic scheduling (7 points)
 
@@ -247,14 +254,58 @@ integrate? From the work in each quarter, what is the best speedup a static
 schedule could reach on each input? How close does your measured `omp_static`
 speedup come to it?
 
-==---==
+==
+> Measured:
+> trig: work by quarter: 25.02% 24.88% 25.15% 24.95%
+> poly: work by quarter: 27.10% 15.23% 15.50% 42.17%
+> exp:  work by quarter: 0.21%   1.55% 11.53% 86.71%
+
+Thread 0 gets panels 0-255, thread 1 gets panels 256-511, and so on.
+
+The largest quarter of the inputs decides the finish time, the largest quarter on the three inputs:
+- trig holds 25.15% of the work, so the static can reach at most 1/0.2515 = 3.98x
+- poly holds 42.17% of the work, so the static can reach at most 1/0.4217 = 2.37x
+- exp holds 86.71% of the work, so the static can reach at most 1/0.8671 = 1.15x
+
+The actual speed up (in results.M5.txt) are 
+- trig: 3.54x-3.55x 
+- poly: 2.26x
+- exp : 1.15-1.17x
+So for Poly and exp, the measured speedup nearly reach the limit. 
+For trig, it is below 3.98x but the quarters are nearly equal. 
+
+==
 
 **(c), 3 points.** What properties of the data make dynamic scheduling improve
 performance over static scheduling? Explain the expected differences among
 the three inputs and compare with your measurements. Discuss any departures
 from the expected trend.
 
-==---==
+==
+Two properties are particularly important: (1) uneven cost per panel and (2) expensive panels are clustered in a few part of [0, 1]. 
+Under static scheduling, the expensive cluster may land on one thread, while the dynamic scheduling allows each thread to handle different amount of panels and balance time cost.
+
+The estimated (From ./simpson.M5 skew):
+> skew         trig  eps 1e-08: serial   274.01 ms, integral -0.00791175435115306
+>   per panel: min 143.3 us, median 278.4 us, max 315.3 us; costliest 1% of panels: 1% of the work
+>   work by quarter of [0,1]: 25.00% 24.87% 25.17% 24.97%
+> skew         poly  eps 1e-12: serial   252.57 ms, integral 0.866850512866918
+>   per panel: min 138.0 us, median 159.4 us, max 12044.3 us; costliest 1% of panels: 13% of the work
+>   work by quarter of [0,1]: 27.08% 15.21% 15.51% 42.20%
+> skew         exp   eps 1e-12: serial   119.77 ms, integral 0.0028201732939432
+>   per panel: min 0.2 us, median 19.3 us, max 782.9 us; costliest 1% of panels: 6% of the work
+>   work by quarter of [0,1]: 0.21% 1.56% 11.53% 86.70%
+If the biggest panels are smaller than the fair share in each inputs, they can be balanced via dynamic scheduling. 
+Trig: (274.01ms / 4) = 68.5ms > 315.3 us; 
+Poly: (252.57ms / 4) = 63.14ms > 12044.3us; 
+Exp: (119.77ms / 4) = 29.94ms > 782.9us
+So, all three inputs with dynamic scheduling can reach about 4x.
+
+The measured results (from results.M5.txt): The gain of dynamic is
+- trig: (3.55x to 3.56x) = 1.00x gain
+- poly: (2.26x to 3.48x) = 1.54x gain
+- exp:  (1.16x to 3.52x) = 3.03x gain
+==
 
 ## Part 4 — Grain size (7 points)
 
@@ -265,7 +316,10 @@ start to finish, and a chunk is never split further.
 **(d), 1 point.** What is OpenMP's default chunk size for `schedule(dynamic)` when you
 don't give one? Does it depend on the number of iterations or threads?
 
-==---==
+==
+The default chunk size for schedule(dynamic) is 1. It doesnt depend on the number of iterations or threads.
+
+==
 
 **(e), 2 points.** What is the default grain-size heuristic in your OpenCilk version? Cite
 your compiler/runtime version and a documentation or implementation source.
@@ -273,7 +327,18 @@ Give the formula (and any rounding)
 and its value for this loop (1024 panels) on 4 workers. How many grains does
 the loop become, and what fraction of `[0, 1]` does each one cover?
 
-==---==
+==
+The default grain size is 32.
+
+> clang version 19.1.7 (https://github.com/OpenCilk/opencilk-project cd8ccfc1fd8293654dde7bf26657f08f89c7e54b)
+> Implemented in `__cilkrts_cilk_for_grainsize_64 in the OpenCilk Cheetah runtime`, `runtime/cilk2c_inlined.c.`
+
+The formula is:
+> grainsize = max(1, min(2048, number of loop iterations 1024 / (8 * number of workers 4)))
+
+Each grain covers 32/1024 = 1/32 (3.125%) of [0, 1].
+
+==
 
 **(f), 3 points.** Compare `cilk_for` and `cilk_for_g1` on your plot. Does a grain
 size of 1 improve the uneven inputs on your machine? Explain the result,
@@ -282,13 +347,32 @@ use the `skew` output to estimate how much of the work the costliest
 grain holds under the default grain size, and what that does to the
 other workers.
 
-==---==
+==
+This is the results from results.M5.txt:
+trig: `cilk_for` 3.53x vs. `cilk_for_g1` 3.56x --> similar
+poly: `cilk_for` 2.72x vs. `cilk_for_g1` 3.20x --> improved but not perfectly improved
+exp : `cilk_for` 3.02x vs. `cilk_for_g1` 3.51x --> improved
+It improves poly and exp inputs
+
+From (e)'s skew results
+- For exp, The biggest 1% panel is 6% of the work out of total 119.77ms
+- For poly, it fixs partially because its most expensive single panel takes 12ms, which is 5% of all the work. 
+So if a thread picks up this big panel near the end, the other threads still need to wait, 
+it cannot make it perfectly balanced
+
+==
 
 **(g), 1 point.** (d) and (e) are very different defaults for the same job. What does
 each one assume about the iterations of a loop? Which assumption fits this
 loop?
 
-==---==
+==
+OpenMP (default 1 iteration) assumes iterations are expensive and costs may vary, so paying scheduling on everyone iteration is relatively cheaper.
+Cilk assumes iterations are cheap and costs are similar. It groups the iterations to save the scheduling overhead. It also considers 32 is enough for thread to steal panels from each other.
+
+OpenMP fits this loop because panels are expensive and uneven.
+
+==
 
 ## What to submit
 

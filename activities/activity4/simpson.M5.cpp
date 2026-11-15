@@ -142,6 +142,7 @@ static double panel(int p, double eps)
 static double omp_static(double eps)
 {
     double sum = 0;
+    #pragma omp parallel for reduction(+:sum) schedule(static)
     for (int p = 0; p < PANELS; p++)
         sum += panel(p, eps);
     return sum;
@@ -152,6 +153,7 @@ static double omp_static(double eps)
 static double omp_dynamic(double eps)
 {
     double sum = 0;
+    #pragma omp parallel for reduction(+:sum) schedule(dynamic, 1)
     for (int p = 0; p < PANELS; p++)
         sum += panel(p, eps);
     return sum;
@@ -161,8 +163,10 @@ static double omp_dynamic(double eps)
 //    also make updates to sum thread-safe
 static double cilk_for_panels(double eps)
 {
-    double sum = 0;
-    for (int p = 0; p < PANELS; p++)
+    // double sum = 0;
+    // for (int p = 0; p < PANELS; p++)
+    cilk::opadd_reducer<double> sum = 0;
+    cilk_for (int p = 0; p < PANELS; p++)
         sum += panel(p, eps);
     return sum;
 }
@@ -171,8 +175,11 @@ static double cilk_for_panels(double eps)
 //    also make updates to sum thread-safe
 static double cilk_for_grain1(double eps)
 {
-    double sum = 0;
-    for (int p = 0; p < PANELS; p++)
+    // double sum = 0;
+    // for (int p = 0; p < PANELS; p++)
+    cilk::opadd_reducer<double> sum = 0;
+    #pragma cilk grainsize(1)
+    cilk_for (int p = 0; p < PANELS; p++)
         sum += panel(p, eps);
     return sum;
 }
@@ -197,8 +204,10 @@ static double adapt_omp(double a, double b, double eps, double whole,
 
     // TODO (Part 1): changes below here
     double l, r;
+    #pragma omp task shared(l)
     l = adapt_omp(a, m, eps / 2, left, fa, flm, fm, depth + 1);
     r = adapt_omp(m, b, eps / 2, right, fm, frm, fb, depth + 1);
+    #pragma omp taskwait
     return l + r;
 }
 
@@ -234,8 +243,9 @@ static double adapt_cilk(double a, double b, double eps, double whole,
                adapt(m, b, eps / 2, right, fm, frm, fb);
 
     // TODO (Part 1): changes below here
-    double l = adapt_cilk(a, m, eps / 2, left, fa, flm, fm, depth + 1);
+    double l = cilk_spawn adapt_cilk(a, m, eps / 2, left, fa, flm, fm, depth + 1);
     double r = adapt_cilk(m, b, eps / 2, right, fm, frm, fb, depth + 1);
+    cilk_sync;
     return l + r;
 }
 
